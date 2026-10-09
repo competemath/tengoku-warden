@@ -479,22 +479,46 @@ class ScopedProxy:
         else:
             conn = http.client.HTTPConnection(rule.upstream_host, port or 80, timeout=self._up_timeout)
         status, sent = 502, 0
+        logged = False
+
+        def record_result() -> None:
+            nonlocal logged
+            if logged:
+                return
+            logged = True
+            self._log(
+                {
+                    "phase": "result",
+                    "request_id": rid,
+                    "decision": "allow",
+                    "status": status,
+                    "method": method,
+                    "host": rule.upstream_host,
+                    "rule_id": rule.rule_id,
+                    "path_template": rule.path_template,
+                    "bytes_out": sent,
+                }
+            )
+
         try:
             try:
                 conn.request(method, path + ("?" + query if query else ""), body=body if (body or method in ("POST", "PUT", "PATCH")) else None, headers=headers)
                 resp = conn.getresponse()
             except (OSError, http.client.HTTPException, ssl.SSLError):
                 status = 502
+                record_result()  # recorded before the client can read the refusal
                 self._respond(h, 502, "upstream_error")
                 return
             status = resp.status
             if 300 <= status < 400 and self._redirects == "refuse":
                 status = 502
+                record_result()
                 self._respond(h, 502, "redirect_refused")
                 return
             declared = resp.getheader("Content-Length")
             if declared is not None and declared.isdigit() and int(declared) > self._max_response:
                 status = 502
+                record_result()
                 self._respond(h, 502, "response_too_large")
                 return
             h.send_response(resp.status)
@@ -517,19 +541,7 @@ class ScopedProxy:
             pass  # client went away or upstream broke mid-body
         finally:
             conn.close()
-            self._log(
-                {
-                    "phase": "result",
-                    "request_id": rid,
-                    "decision": "allow",
-                    "status": status,
-                    "method": method,
-                    "host": rule.upstream_host,
-                    "rule_id": rule.rule_id,
-                    "path_template": rule.path_template,
-                    "bytes_out": sent,
-                }
-            )
+            record_result()  # a streamed body is recorded when it ends: the client may already hold the headers
 
 
 # --------------------------------------------------------------------------- presets

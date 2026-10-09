@@ -1,6 +1,7 @@
 import base64
 import http.client
 import json
+import time
 import socket
 import threading
 import unittest
@@ -238,12 +239,20 @@ class ForwardingTest(ProxyCase):
         self.assertIn(b" 200 ", resp.split(b"\r\n")[0])
         self.assertEqual(self.up.log[-1]["headers"]["host"], "127.0.0.1:%d" % self.up.port)
 
+    def wait_for_results(self, n):
+        """A streamed response is audited when its body ends, which can be a moment after the client read it."""
+        for _ in range(200):
+            if len([e for e in self.audit if e.get("phase") == "result"]) >= n:
+                return
+            time.sleep(0.01)
+
     def test_audit_entries_have_no_secrets_or_header_values(self):
         evil = "client" + "-" + "supplied" + "-" + "secret"
         self.req("GET", "/echo?q=" + evil, headers={"Authorization": "Bearer " + evil, "Cookie": evil})
         self.req("GET", "/admin/" + evil, headers={"Authorization": "Bearer " + evil})
         self.req("GET", "/echo", cap="nope")
         self.req("POST", "/post", body=b"b" * 10)
+        self.wait_for_results(2)
         blob = json.dumps(self.audit)
         for secret in (REAL, CAP, evil, "Bearer", "nope"):
             self.assertNotIn(secret, blob)
