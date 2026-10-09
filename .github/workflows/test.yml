@@ -1,0 +1,32 @@
+# The tests, on every push and pull request. Standard library only, no secrets, read-only token. The Linux-only probes of the
+# self-test run for real here (this is a Linux runner); the escape battery against a real jail is exercised by the repositories
+# that use it.
+name: test
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions: {}
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions: { contents: read }
+    strategy:
+      matrix:
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2
+        with: { egress-policy: audit }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with: { python-version: "${{ matrix.python }}" }
+      - name: Tests
+        run: python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py'
